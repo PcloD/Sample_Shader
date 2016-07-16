@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<title>three.js webgl - materials - bump map [Lee Perry-Smith]</title>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0">
+		<style>
+			body {
+				background:#000;
+				color:#fff;
+				padding:0;
+				margin:0;
+				font-weight: bold;
+				overflow:hidden;
+			}
+
+			a {	color: #ffffff;	}
+
+			#info {
+				position: absolute;
+				top: 0px; width: 100%;
+				color: #ffffff;
+				padding: 5px;
+				font-family:Monospace;
+				font-size:13px;
+				text-align:center;
+				z-index:1000;
+			}
+
+			#oldie {
+				background:rgb(200,100,0) !important;
+				color:#fff;
+			}
+
+			#vt { display:none }
+			#vt, #vt a { color:orange; }
+		</style>
+	</head>
+
+	<body>
+		<div id="info">
+			<a href="http://threejs.org" target="_blank">three.js</a> - webgl bump mapping without tangents using <a href="http://mmikkelsen3d.blogspot.sk/2011/07/derivative-maps.html">Morten Mikkelsen's</a> method -
+			<a href="http://graphics.cs.williams.edu/data/meshes.xml#14" target="_blank">Lee Perry-Smith</a> head
+		</div>
+
+		<script src="lib/three.js"></script>
+
+		<!--script src="js/Detector.js"></script>
+		<script src="js/libs/stats.min.js"></script-->
+		<!-- Vertex shader -->
+		<script id="vertexShader" type="x-shader/x-vertex">
+
+			uniform vec3 vLightPosition;
+			uniform vec3 vCameraPosition;
+
+			varying vec2 texcoord;
+			varying vec3 worldPos;
+			varying vec3 eyeDir;
+			varying vec3 lightDir;
+			varying vec3 oNormal;
+			
+			void main() 
+			{
+				texcoord = uv;
+				
+				vec3 pos = position;
+				gl_Position = projectionMatrix * modelViewMatrix *  vec4( position, 1.0 );
+				
+				eyeDir = normalize( vCameraPosition.xyz - pos.xyz );
+				lightDir = normalize( vLightPosition.xyz - pos.xyz );
+				worldPos = pos;
+				
+				oNormal = normalize( normal );				
+			}
+		</script>
+		
+		<!-- Pixel shader -->
+		<script id="fragmentShader" type="x-shader/x-fragment">
+			uniform sampler2D translucencySampler;
+			uniform vec3 vLightPosition;
+			uniform vec3 vLightColor;
+			uniform float LTPower;
+			uniform float LTScale;
+			uniform float LTDistortion;
+			uniform float LTAmbient;
+			uniform float time;
+
+			varying vec2 texcoord;
+			varying vec3 worldPos;
+			varying vec3 eyeDir;
+			varying vec3 lightDir;
+			varying vec3 oNormal;
+
+			float kC = 0.5;
+			float kL = 0.05;
+			float kQ = 0.0001;
+
+			void main()
+			{
+				vec4 FinalColor = vec4( 1, 0, 0, 1 );
+
+				
+				float shininess = 128.0;
+
+				float nc = 1.0 / 255.0;
+				//vec4 vDiffuse = vec4( 10.0*nc, 79.0*nc, 255.0*nc, 1.0 );
+				vec4 vDiffuse = vec4( 255.0*nc, 79.0*nc, 10.0*nc, 1.0 );
+				vec3 vLightColor = 	vec3(0.3+abs(sin(-time*0.1))*0.6, 0.7+cos(time*0.1)*0.1, sin(time*0.05)*0.5+0.2);
+		
+				vec3 N = normalize( oNormal );
+				vec3 L = normalize( lightDir );
+				vec3 V = normalize( eyeDir );
+				
+
+				// distance attenuation	
+				float d = length( vLightPosition - worldPos );
+				float LightAttenuation = (1.0 / (kC + kL*d + kQ*d*d));
+				
+				
+				vec4 LTThickness = texture2D( translucencySampler, texcoord );
+
+				vec3 LTLight = normalize( L + (N * LTDistortion) );
+				float LTDot = pow( clamp( dot(V, -LTLight), 0.0, 1.0 ), LTPower ) * LTScale;
+				vec3 LT = LightAttenuation * (LTDot + LTAmbient) * LTThickness.rgb;
+
+				float NdotL = max( dot(N, L), 0.0 );
+				
+				vec3 diffcomp = vDiffuse.rgb * vLightColor * NdotL;
+				vec3 H = normalize(V + L);			
+				vec3 specular = vec3( clamp( 6.0*pow( max(dot(N, H), 0.0), shininess ), 0.0, 1.0 ) ) ;
+
+				FinalColor.rgb = (diffcomp + specular) * LightAttenuation;
+				FinalColor.rgb += vDiffuse.rgb * vLightColor * LT;
+				FinalColor.rgb = clamp( FinalColor.rgb, 0.0, 1.0 );
+				gl_FragColor = FinalColor;
+			}
+
+		</script>
+
+		<script>
+
+			//if ( ! Detector.webgl ) Detector.addGetWebGLMessage();
+
+			var statsEnabled = true;
+
+			var container, stats, loader;
+
+			var camera, scene, renderer;
+
+			var mesh;
+
+			var spotLight;
+
+			var mouseX = 0;
+			var mouseY = 0;
+
+			var targetX = 0;
+			var targetY = 0;
+
+			var windowHalfX = window.innerWidth / 2;
+			var windowHalfY = window.innerHeight / 2;
+
+			init();
+			animate();
+
+			function init() {
+
+				container = document.createElement( 'div' );
+				document.body.appendChild( container );
+
+				//
+
+				camera = new THREE.PerspectiveCamera( 27, window.innerWidth / window.innerHeight, 1, 10000 );
+				camera.position.z = 1200;
+
+				scene = new THREE.Scene();
+
+				// LIGHTS
+				var hemi = new THREE.HemisphereLight( 0x443333, 0x111122 )
+				scene.add( hemi );
+
+				
+
+					light1 = new THREE.PointLight( 0xff0040, 2, 50 );
+				//light1.add( new THREE.Mesh( sphere, new THREE.MeshBasicMaterial( { color: 0xff0040 } ) ) );
+				scene.add( light1 );
+
+				var mapHeight = new THREE.TextureLoader().load( "leeperrysmith/Infinite-Level_02_Disp_NoSmoothUV-4096.jpg" );
+
+				mapHeight.anisotropy = 4;
+				mapHeight.repeat.set( 0.998, 0.998 );
+				mapHeight.offset.set( 0.001, 0.001 );
+				mapHeight.wrapS = mapHeight.wrapT = THREE.RepeatWrapping;
+				mapHeight.format = THREE.RGBFormat;
+
+				var material = new THREE.MeshPhongMaterial( {
+					color: 0x552811,
+					specular: 0x222222,
+					shininess: 25,
+					bumpMap: mapHeight,
+					bumpScale: 12
+				} );
+				cameraPosition = new THREE.Vector3();
+				subShaderUniforms = 
+				{ 
+					translucencySampler: { type: "t", value: 0, texture: mapHeight },
+					vLightPosition: { type: "v3", value: light1.position },
+					vLightColor: { type: "v3", value: new THREE.Vector3(0,1,1) },
+					vCameraPosition: { type: "v3", value: cameraPosition },
+					LTPower: { type: "f", value: 4.0 },
+					LTScale: { type: "f", value: 9.0 },
+					LTDistortion: { type: "f", value: 0.185 },
+					LTAmbient: { type: "f", value: 4.0 },
+					time: { type: "f", value: 0.0 },
+				};
+				
+				subShaderMaterial = new THREE.ShaderMaterial( 
+				{
+					uniforms: subShaderUniforms,
+					vertexShader: document.getElementById('vertexShader').textContent,
+					fragmentShader: document.getElementById('fragmentShader').textContent,
+					//depthTest: false
+				} );
+				
+				loader = new THREE.JSONLoader();
+				loader.load( "leeperrysmith/LeePerrySmith.js", function( geometry ) { createScene( geometry, 100, subShaderMaterial ) } );
+
+				renderer = new THREE.WebGLRenderer( { antialias: false } );
+				renderer.setClearColor( 0x060708 );
+				renderer.setPixelRatio( window.devicePixelRatio );
+				renderer.setSize( window.innerWidth, window.innerHeight );
+				container.appendChild( renderer.domElement );
+
+				renderer.shadowMap.enabled = true;
+				renderer.shadowMap.renderReverseSided = false;
+
+				//
+
+				renderer.gammaInput = true;
+				renderer.gammaOutput = true;
+
+				//
+
+				/*if ( statsEnabled ) {
+
+					stats = new Stats();
+					container.appendChild( stats.dom );
+
+				}
+*/
+				// EVENTS
+
+				document.addEventListener( 'mousemove', onDocumentMouseMove, false );
+				window.addEventListener( 'resize', onWindowResize, false );
+
+			}
+
+			function createScene( geometry, scale, material ) {
+
+				mesh = new THREE.Mesh( geometry, material );
+
+				mesh.position.y = - 50;
+				mesh.scale.set( scale, scale, scale );
+
+				mesh.castShadow = true;
+				mesh.receiveShadow = true;
+
+				scene.add( mesh );
+
+			}
+
+			//
+
+			function onWindowResize( event ) {
+
+				SCREEN_WIDTH = window.innerWidth;
+				SCREEN_HEIGHT = window.innerHeight;
+
+				renderer.setSize( SCREEN_WIDTH, SCREEN_HEIGHT );
+
+				camera.aspect = SCREEN_WIDTH / SCREEN_HEIGHT;
+				camera.updateProjectionMatrix();
+
+			}
+
+			function onDocumentMouseMove( event ) {
+
+				mouseX = ( event.clientX - windowHalfX );
+				mouseY = ( event.clientY - windowHalfY );
+
+			}
+
+			//
+
+			function animate() {
+
+				requestAnimationFrame( animate );
+
+				render();
+				//if ( statsEnabled ) stats.update();
+
+			}
+
+			function render() {
+
+				targetX = mouseX * .001;
+				targetY = mouseY * .001;
+				var time = Date.now() * 0.0005;
+				if ( mesh ) {
+
+					mesh.rotation.y += 0.05 * ( targetX - mesh.rotation.y );
+					mesh.rotation.x += 0.05 * ( targetY - mesh.rotation.x );
+
+				}
+					cameraPosition.x = camera.position.x;
+				cameraPosition.y = camera.position.y;
+				cameraPosition.z = camera.position.z;
+				renderer.render( scene, camera );
+
+				light1.position.x = Math.sin( time * 0.7 ) * 30;
+				light1.position.y = Math.cos( time * 0.5 ) * 40;
+				light1.position.z = Math.cos( time * 0.3 ) * 30;
+
+			}
+
+		</script>
+
+	</body>
+</html>
